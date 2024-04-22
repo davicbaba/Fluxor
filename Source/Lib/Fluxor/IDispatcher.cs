@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 
 namespace Fluxor;
 
@@ -19,4 +20,17 @@ public interface IDispatcher
 	/// An event that is triggered whenever <see cref="Dispatch(object)"/> is executed.
 	/// </summary>
 	event EventHandler<ActionDispatchedEventArgs> ActionDispatched;
+
+	/// <summary>
+	/// Dispatches an action to all features added to the store and ensures all effects with a regstered
+	/// interest in the action type are notified.
+	/// </summary>
+	/// <param name="action">The action to dispatch to all features</param>
+	Task DispatchAsync(object action);
+
+	/// <summary>
+	/// An event that is triggered whenever <see cref="DispatchAsync(object)"/> is executed.
+	/// </summary>
+
+	event Func<ActionDispatchedEventArgs, Task> ActionDispatchedAsync;
 }

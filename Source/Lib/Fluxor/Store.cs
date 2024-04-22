@@ -38,6 +38,7 @@ public class Store : IStore, IActionSubscriber, IDisposable
 		ActionSubscriber = new ActionSubscriber();
 		Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
 		Dispatcher.ActionDispatched += ActionDispatched;
+		Dispatcher.ActionDispatchedAsync += ActionDispatchedAsync;
 		Dispatcher.Dispatch(new StoreInitializedAction());
 	}
 
@@ -142,6 +143,13 @@ public class Store : IStore, IActionSubscriber, IDisposable
 		}
 	}
 
+	private async Task ActionDispatchedAsync(ActionDispatchedEventArgs e)
+	{
+		if (ProcessAction(e.Action))
+			await TriggerEffectsAsync(e.Action);
+	}
+
+	
 
 	private void ActionDispatched(object sender, ActionDispatchedEventArgs e)
 	{
@@ -185,7 +193,9 @@ public class Store : IStore, IActionSubscriber, IDisposable
 		}
 	}
 
-	private void TriggerEffects(object action)
+	
+
+	private async Task TriggerEffectsAsync(object action)
 	{
 		var recordedExceptions = new List<Exception>();
 		var effectsToExecute = Effects
@@ -218,22 +228,19 @@ public class Store : IStore, IActionSubscriber, IDisposable
 			}
 		}
 
-		Task.Run(async () =>
+		try
 		{
-			try
-			{
-				await Task.WhenAll(executedEffects);
-			}
-			catch (Exception e)
-			{
-				collectExceptions(e);
-			}
+			await Task.WhenAll(executedEffects);
+		}
+		catch (Exception e)
+		{
+			collectExceptions(e);
+		}
 
-			// Let the UI decide if it wishes to deal with any unhandled exceptions.
-			// By default it should throw the exception if it is not handled.
-			foreach (Exception exception in recordedExceptions)
-				UnhandledException?.Invoke(this, new Exceptions.UnhandledExceptionEventArgs(exception));
-		});
+		// Let the UI decide if it wishes to deal with any unhandled exceptions.
+		// By default it should throw the exception if it is not handled.
+		foreach (Exception exception in recordedExceptions)
+			UnhandledException?.Invoke(this, new Exceptions.UnhandledExceptionEventArgs(exception));
 	}
 
 	private async Task InitializeMiddlewaresAsync()
@@ -282,18 +289,8 @@ public class Store : IStore, IActionSubscriber, IDisposable
 			while (QueuedActions.TryDequeue(out object nextActionToProcess))
 			{
 				// Only process the action if no middleware vetos it
-				if (Middlewares.All(x => x.MayDispatchAction(nextActionToProcess)))
-				{
-					ExecuteMiddlewareBeforeDispatch(nextActionToProcess);
-
-					// Notify all features of this action
-					foreach (var featureInstance in FeaturesByName.Values)
-						featureInstance.ReceiveDispatchNotificationFromStore(nextActionToProcess);
-
-					ActionSubscriber?.Notify(nextActionToProcess);
-					ExecuteMiddlewareAfterDispatch(nextActionToProcess);
-					TriggerEffects(nextActionToProcess);
-				}
+				if (ProcessAction(nextActionToProcess))
+					Task.Run(async () => await TriggerEffectsAsync(nextActionToProcess)); //without waiting for the effects.
 			}
 		}
 		finally
@@ -301,4 +298,27 @@ public class Store : IStore, IActionSubscriber, IDisposable
 			IsDispatching = false;
 		}
 	}
+
+	private bool ProcessAction(object nextActionToProcess)
+	{
+		bool processed = false;
+
+		// Only process the action if no middleware vetos it
+		if (Middlewares.All(x => x.MayDispatchAction(nextActionToProcess)))
+		{
+			ExecuteMiddlewareBeforeDispatch(nextActionToProcess);
+
+			// Notify all features of this action
+			foreach (var featureInstance in FeaturesByName.Values)
+				featureInstance.ReceiveDispatchNotificationFromStore(nextActionToProcess);
+
+			ActionSubscriber?.Notify(nextActionToProcess);
+			ExecuteMiddlewareAfterDispatch(nextActionToProcess);
+
+			processed = true;
+		}
+
+		return processed;
+	}
+
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace Fluxor;
 
@@ -12,6 +13,7 @@ public class Dispatcher : IDispatcher
 	private readonly Queue<object> QueuedActions = new Queue<object>();
 	private volatile bool IsDequeuing;
 	private EventHandler<ActionDispatchedEventArgs> _ActionDispatched;
+	private Func<ActionDispatchedEventArgs, Task> _ActionDispatchedAsync;
 
 	/// <see cref="IDispatcher.ActionDispatched"/>
 	public event EventHandler<ActionDispatchedEventArgs> ActionDispatched
@@ -33,6 +35,24 @@ public class Dispatcher : IDispatcher
 		}
 	}
 
+	public event Func<ActionDispatchedEventArgs, Task> ActionDispatchedAsync
+	{
+		add
+		{
+			lock (SyncRoot)
+			{
+				_ActionDispatchedAsync += value;
+			}
+		}
+		remove
+		{
+			lock (SyncRoot)
+			{
+				_ActionDispatchedAsync -= value;
+			}
+		}
+	}
+
 	/// <see cref="IDispatcher.Dispatch(object)"/>
 	public void Dispatch(object action)
 	{
@@ -44,6 +64,11 @@ public class Dispatcher : IDispatcher
 			QueuedActions.Enqueue(action);
 		}
 		DequeueActions();
+	}
+
+	public async Task DispatchAsync(object action)
+	{
+		await _ActionDispatchedAsync(new ActionDispatchedEventArgs(action));
 	}
 
 	private void DequeueActions()
